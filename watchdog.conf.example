@@ -1,0 +1,40 @@
+# container-watchdog configuration  -  /etc/container-watchdog/watchdog.conf
+# Re-read every cycle: save this file and it takes effect within POLL_SECONDS. No restart needed.
+#
+# ---- settings (all optional; defaults shown) -------------------------------------------
+# POLL_SECONDS=30        how often every container below is checked
+# GRACE_SECONDS=180      a container must be down this long before we act (lets Dockhand,
+#                        reboots, or manual maintenance finish first)
+# MAX_RESTARTS=3         max actions per RESTART_WINDOW; after that it is HARD DOWN: we stop
+#                        trying, log it, and send the webhook
+# RESTART_WINDOW=3600    seconds
+# NOTIFY_WEBHOOK=        Discord webhook URL; used ONLY for HARD DOWN. Leave empty for none.
+# LOG_MAX_KB=1024        watchdog.log rotates at this size...
+# LOG_KEEP=3             ...keeping this many old copies (watchdog.log.1 .. .3)
+#
+# ---- containers to watch ------------------------------------------------------------------
+# one per line:   name   checks   action   [options]
+#
+#   checks   running        container must be running
+#            running,ports  ...and its published ports must still be published
+#                           (needs action=recreate; this is the old mail-bridge failure mode)
+#   action   start          docker start <name>
+#            compose-up     cd <dir> && docker compose up -d   (also picks up a newly pulled image)
+#            recreate       cd <dir> && docker compose up -d --force-recreate
+#   options  dir=/opt/containers/x   compose folder (required for compose-up / recreate)
+#            service=name            one compose service only (default: the whole folder)
+#            env=/path/file.env      passed as docker compose --env-file
+#            grace=300               per-container grace override
+#            pull=yes                docker compose pull BEFORE bringing it back, so a restart
+#                                    also picks up a newer image (default no). Only for compose-up /
+#                                    recreate. If the pull fails (no internet, registry down) it
+#                                    is logged and the restart carries on with the local image.
+#
+# docker-proxy is on by default on hosts that have it (the installer enables this line):
+#docker-proxy   running   compose-up   dir=/opt/containers/docker-proxy   pull=yes
+#
+# example, replacing mail-bridge-portwatch on DOCKER-AGENTS:
+#mail-bridge    running,ports   recreate   dir=/opt/containers/mail-bridge
+#
+# To pause everything for maintenance:   touch /etc/container-watchdog/PAUSE
+# To resume:                             rm /etc/container-watchdog/PAUSE

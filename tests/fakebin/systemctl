@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+echo "systemctl $*" >> "${FAKE_SYSTEMCTL_LOG:-/dev/null}"
+case "$1" in
+  is-active) echo active ;;
+  is-enabled) exit 1 ;;
+  status) echo "● container-watchdog.service - fake (active)" ;;
+  *) exit 0 ;;
+esac

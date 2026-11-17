@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# fake curl: record the -d payload
+while [ $# -gt 0 ]; do case "$1" in -d) shift; echo "$1" >> "$FAKE_DIR/webhook.log";; esac; shift; done
+exit 0

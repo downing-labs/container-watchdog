@@ -1,0 +1,5 @@
+watchdog.conf
+watchdog.log
+watchdog.log.*
+PAUSE
+.lock

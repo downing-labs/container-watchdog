@@ -1,0 +1,14 @@
+[Unit]
+Description=container-watchdog - restart selected Docker containers that stop
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=simple
+# started through bash so it also works where /etc is mounted noexec (Flatcar)
+ExecStart=/bin/bash /etc/container-watchdog/container-watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
