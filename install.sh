@@ -9,6 +9,7 @@
 #   bash install.sh                    install or re-run (never overwrites watchdog.conf)
 #   bash install.sh --update           fetch the newest files from GitHub, keep watchdog.conf
 #   bash install.sh --status           show service state and what the watchdog sees
+#   bash install.sh --set-webhook URL  set (or replace) the Discord webhook used for HARD DOWN alerts
 #   bash install.sh --retire-portwatch disable the old mail-bridge-portwatch timer (kept, not deleted)
 #   bash install.sh --uninstall        stop and unregister the service; the folder is kept
 #   bash install.sh --purge            like --uninstall, and delete /etc/container-watchdog
@@ -27,10 +28,11 @@ case "${1:-}" in
   ""|--install) ACTION=install ;;
   --update) ACTION=update ;;
   --status) ACTION=status ;;
+  --set-webhook) ACTION=webhook; WEBHOOK_URL="${2:-}" ;;
   --retire-portwatch) ACTION=retire ;;
   --uninstall) ACTION=uninstall ;;
   --purge) ACTION=purge ;;
-  -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
   *) die "unknown option: $1 (try --help)" ;;
 esac
 
@@ -78,9 +80,21 @@ case $ACTION in
 
     if [ ! -f "$INSTALL_DIR/watchdog.conf" ]; then
       cp "$INSTALL_DIR/watchdog.conf.example" "$INSTALL_DIR/watchdog.conf"
-      if [ -d /opt/containers/docker-proxy ] || docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx docker-proxy; then
-        sed -i 's/^#\(docker-proxy[[:space:]]\)/\1/' "$INSTALL_DIR/watchdog.conf"
-        say "docker-proxy found on this host: enabled in watchdog.conf"
+      PROXY_DIR=""; PROXY_SEEN=0
+      if [ -d /opt/containers/docker-proxy ]; then
+        PROXY_DIR=/opt/containers/docker-proxy
+      elif docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx docker-proxy; then
+        PROXY_SEEN=1
+        d=$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' docker-proxy 2>/dev/null)
+        if [ -n "$d" ] && [ -d "$d" ]; then PROXY_DIR=$d; fi
+      fi
+      if [ -n "$PROXY_DIR" ]; then
+        esc=$(printf '%s' "$PROXY_DIR" | sed 's/[\\&|]/\\&/g')
+        sed -i -e 's/^#\(docker-proxy[[:space:]]\)/\1/' -e "s|dir=/opt/containers/docker-proxy|dir=$esc|" "$INSTALL_DIR/watchdog.conf"
+        say "docker-proxy found on this host: enabled in watchdog.conf (compose folder: $PROXY_DIR)"
+      elif [ "$PROXY_SEEN" = 1 ]; then
+        say "docker-proxy container found, but its compose folder could not be determined: its line is left"
+        say "commented out in watchdog.conf. Set dir= yourself, then remove the leading #."
       else
         say "no docker-proxy on this host: its line is left commented out in watchdog.conf"
       fi
@@ -103,6 +117,30 @@ case $ACTION in
     fi
     say
     bash "$INSTALL_DIR/container-watchdog.sh" --status
+    ;;
+
+  webhook)
+    CONF="$INSTALL_DIR/watchdog.conf"
+    [ -f "$CONF" ] || die "not installed ($CONF missing) - run install.sh first"
+    case $WEBHOOK_URL in
+      https://*) ;;
+      *) die "usage: install.sh --set-webhook https://discord.com/api/webhooks/ID/TOKEN" ;;
+    esac
+    case $WEBHOOK_URL in
+      *[[:space:]\\\|\&\"\']*) die "the webhook URL contains a character that is not allowed (space, quote, \\, | or &)" ;;
+    esac
+    TMPC=$(mktemp) || die "mktemp failed"
+    # replace the live NOTIFY_WEBHOOK= line (first one wins, later duplicates dropped), else append; keep the comments
+    awk -v u="$WEBHOOK_URL" 'BEGIN{d=0} /^NOTIFY_WEBHOOK=/ {if(!d){print "NOTIFY_WEBHOOK=" u; d=1}; next} {print} END{if(!d) print "NOTIFY_WEBHOOK=" u}' "$CONF" > "$TMPC" \
+      && cat "$TMPC" > "$CONF"; rm -f "$TMPC"
+    chmod 600 "$CONF"
+    # no restart needed: the daemon re-reads the config every cycle
+    if bash "$INSTALL_DIR/container-watchdog.sh" --status 2>/dev/null | grep -q 'webhook: set'; then
+      say "Webhook saved in $CONF (ends ...${WEBHOOK_URL: -6}). It takes effect within one poll."
+      say "Test it with:  bash $INSTALL_DIR/container-watchdog.sh --test-notify"
+    else
+      die "the webhook was written but --status does not show it as set - check $CONF"
+    fi
     ;;
 
   status)

@@ -56,7 +56,13 @@ curl -fsSL https://raw.githubusercontent.com/downing-labs/container-watchdog/mai
 bash /tmp/cw-install.sh
 ```
 
-The installer asks for your sudo password itself, creates `/etc/container-watchdog/`, never overwrites an existing `watchdog.conf`, and enables the service. On a host that has a container named `docker-proxy` it also enables the default `docker-proxy` line.
+The installer asks for your sudo password itself, creates `/etc/container-watchdog/`, never overwrites an existing `watchdog.conf`, and enables the service. On a host that has a container named `docker-proxy` it also enables the default `docker-proxy` line, using the compose folder it finds (`/opt/containers/docker-proxy`, or else the folder recorded on the running container). If it can't find a real folder it leaves the line commented out and tells you.
+
+Then, optionally, set the Discord webhook for HARD DOWN alerts:
+
+```
+sudo bash /etc/container-watchdog/install.sh --set-webhook https://discord.com/api/webhooks/ID/TOKEN
+```
 
 On hosts that can't reach GitHub, copy this folder across and run `bash install.sh` from it.
 
@@ -66,6 +72,7 @@ On hosts that can't reach GitHub, copy this folder across and run `bash install.
 | Change what is watched | edit `watchdog.conf` (re-read every cycle, no restart) |
 | Pause for maintenance | `touch /etc/container-watchdog/PAUSE` / `rm /etc/container-watchdog/PAUSE` |
 | Update | `bash /etc/container-watchdog/install.sh --update` (keeps `watchdog.conf`) |
+| Set or change the Discord webhook | `bash /etc/container-watchdog/install.sh --set-webhook URL` (takes effect within one poll) |
 | Test the Discord webhook | `bash /etc/container-watchdog/container-watchdog.sh --test-notify` |
 | Retire an old timer-based mail-bridge check | `bash /etc/container-watchdog/install.sh --retire-portwatch` |
 | Remove | `install.sh --uninstall` (keeps the folder) or `--purge` (deletes it) |
@@ -110,6 +117,8 @@ mail-bridge       running,ports    recreate      dir=/opt/containers/mail-bridge
 
 A problem in the config is logged and that line is skipped. It never stops the daemon.
 
+The list can be empty. If you remove the `docker-proxy` line (or every line), the service keeps running, logs `watching nothing`, and touches no container. Add a line later and it is picked up on the next poll.
+
 ## How it behaves
 
 1. A container found not running starts a timer from Docker's `FinishedAt` (or from daemon start / PAUSE resume, whichever is later, so a reboot or a long pause never causes an instant restart).
@@ -135,7 +144,7 @@ If `docker compose` isn't available to root (for example the compose plugin is i
 bash tests/run-tests.sh
 ```
 
-59 checks against a fake `docker`, `curl` and `systemctl`. No root and no real containers are needed. They cover healthy silence, grace handling, hard down with a single webhook, Docker being unreachable, `PAUSE`, port loss, missing containers, config errors, `--status`, the pull option and the installer (fresh install, re-run, uninstall, purge).
+83 checks against a fake `docker`, `curl` and `systemctl`. No root and no real containers are needed. They cover healthy silence, grace handling, hard down with a single webhook, Docker being unreachable, `PAUSE`, port loss, missing containers, config errors, `--status`, the pull option, an empty config, the compose-plugin fallback, and the installer (fresh install, re-run, folder detection, `--set-webhook`, uninstall, purge).
 
 ## License
 

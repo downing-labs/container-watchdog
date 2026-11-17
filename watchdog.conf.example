@@ -9,6 +9,7 @@
 #                        trying, log it, and send the webhook
 # RESTART_WINDOW=3600    seconds
 # NOTIFY_WEBHOOK=        Discord webhook URL; used ONLY for HARD DOWN. Leave empty for none.
+#                        Easiest to set with:  install.sh --set-webhook URL
 # LOG_MAX_KB=1024        watchdog.log rotates at this size...
 # LOG_KEEP=3             ...keeping this many old copies (watchdog.log.1 .. .3)
 #

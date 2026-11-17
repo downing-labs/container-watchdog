@@ -17,7 +17,7 @@
 # fails, or a container is HARD DOWN (we gave up). Daemon start/stop, PAUSE changes and
 # config problems are logged too. The webhook fires only for HARD DOWN.
 
-VERSION="1.1.1"
+VERSION="1.2.0"
 export LC_ALL=C
 
 DIR="${CW_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
@@ -167,23 +167,24 @@ ports_published() {   # number of published port lines
 
 # ---------------------------------------------------------------- actions
 COMPOSE_BIN=()
-find_compose() {   # once: "docker compose", else a compose binary installed per-user (the service runs as root)
+find_compose() {   # "docker compose", else a compose binary installed per-user (the service runs as root).
+  # Only a SUCCESS is remembered, so a plugin installed later is still found. Called from run_action in the
+  # main shell, so the one log line below appears once per daemon run, not once per sub-shell.
   [ ${#COMPOSE_BIN[@]} -gt 0 ] && return 0
   if timeout 20 docker compose version >/dev/null 2>&1; then COMPOSE_BIN=(docker compose); return 0; fi
   local f
-  for f in /home/*/.docker/cli-plugins/docker-compose /root/.docker/cli-plugins/docker-compose \
+  for f in ${CW_COMPOSE_PATHS:-} /home/*/.docker/cli-plugins/docker-compose /root/.docker/cli-plugins/docker-compose \
            /usr/local/lib/docker/cli-plugins/docker-compose /usr/lib/docker/cli-plugins/docker-compose \
            /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose /usr/bin/docker-compose; do
     if [ -x "$f" ] && timeout 20 "$f" version >/dev/null 2>&1; then
       COMPOSE_BIN=("$f"); log INFO "docker compose is not available to root; using $f"; return 0
     fi
   done
-  COMPOSE_BIN=(docker compose); return 1
+  return 1
 }
 
 compose_base() {   # fills array COMPOSE_CMD for container $1
-  find_compose
-  COMPOSE_CMD=("${COMPOSE_BIN[@]}")
+  if [ ${#COMPOSE_BIN[@]} -gt 0 ]; then COMPOSE_CMD=("${COMPOSE_BIN[@]}"); else COMPOSE_CMD=(docker compose); fi
   [ -n "${C_ENV[$1]}" ] && COMPOSE_CMD+=(--env-file "${C_ENV[$1]}")
 }
 
@@ -225,6 +226,7 @@ run_action() {   # run_action NAME -> ACT_OUT, rc 0/1
       ACT_OUT=$(timeout 60 docker start "$n" 2>&1); return $? ;;
     compose-up|recreate)
       if [ ! -d "$d" ]; then ACT_OUT="compose folder not found: $d"; return 1; fi
+      find_compose
       [ "${C_PULL[$n]}" = yes ] && pull_images "$n"
       compose_base "$n"; cmd=("${COMPOSE_CMD[@]}")
       cmd+=(up -d)

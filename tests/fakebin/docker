@@ -9,6 +9,12 @@ case "$1" in
     name="${@: -1}"
     [ -d "$S/$name" ] || { echo "Error response from daemon: No such container: $name" >&2; exit 1; }
     echo "$(cat "$S/$name/status")|$(cat "$S/$name/finished")|$(cat "$S/$name/portcfg")" ;;
+  ps)       # docker ps -a --format '{{.Names}}'
+    for d in "$S"/*/; do [ -d "$d" ] && basename "$d"; done ;;
+  inspect)  # docker inspect -f '{{index .Config.Labels "...working_dir"}}' NAME
+    name="${@: -1}"
+    [ -d "$S/$name" ] || { echo "Error: No such object: $name" >&2; exit 1; }
+    cat "$S/$name/workdir" 2>/dev/null || echo "" ;;
   port)
     cat "$S/$2/ports" 2>/dev/null ;;
   start)
@@ -19,6 +25,7 @@ case "$1" in
     cat "$S/image_id" 2>/dev/null || echo "sha256:aaa" ;;
   compose)
     case " $* " in
+      *" version "*) [ -f "$S/NO_COMPOSE" ] && { echo "docker: unknown command: docker compose" >&2; exit 1; }; echo "Docker Compose version v2.fake"; exit 0 ;;
       *" config --images "*) echo "ghcr.io/example/app:latest"; exit 0 ;;
       *" pull "*|*" pull")
         echo "compose $* (cwd=$PWD)" >> "$S/actions.log"

@@ -208,6 +208,70 @@ bash "$HERE/../install.sh" --purge >"$T/out5.txt" 2>&1
 [ ! -d "$CW_INSTALL_DIR" ] && ok "--purge removes the folder" || bad "purge"
 unset CW_INSTALL_DIR FAKE_SYSTEMCTL_LOG
 
+
+echo "18. empty config (docker-proxy line removed): daemon runs quietly and acts on nothing"
+new_env "$CONF_BASE"
+mk docker-proxy exited "2026-11-17T00:00:00Z"
+start_daemon; sleep 5
+kill -0 "$DPID" 2>/dev/null && ok "daemon still running with no containers configured" || bad "daemon exited"
+grep -q 'watching nothing' "$CW_DIR/watchdog.log" && ok "logs 'watching nothing' once at start" || bad "no 'watching nothing' line"
+[ -z "$(logbody)" ] && ok "no other log lines" || { bad "unexpected log lines:"; logbody; }
+[ ! -s "$FAKE_DIR/actions.log" ] && ok "touches no container that is not listed" || bad "acted on an unlisted container"
+bash "$SCRIPT" --status | grep -q 'no containers configured' && ok "--status says so" || bad "--status for empty config"
+stop_daemon
+
+echo "19. line removed while running: reload logged, container left alone afterwards"
+new_env "$CONF_BASE
+docker-proxy running start"
+mk docker-proxy running
+start_daemon; sleep 2
+printf '%s\n' "$CONF_BASE" > "$CW_DIR/watchdog.conf"
+wait_log 'now watching nothing' 6 && ok "config reload logged" || bad "reload not logged"
+echo exited > "$FAKE_DIR/docker-proxy/status"; echo "2026-11-17T00:00:00Z" > "$FAKE_DIR/docker-proxy/finished"
+sleep 6
+[ ! -s "$FAKE_DIR/actions.log" ] && ok "removed container is no longer touched" || bad "acted on a removed container"
+stop_daemon
+
+echo "20. compose not available to root: fallback binary found, logged ONCE (even with pull=yes)"
+new_env "$CONF_BASE
+docker-proxy running compose-up dir=@T@/compose pull=yes"
+mk docker-proxy exited "2026-11-17T00:00:00Z"; touch "$FAKE_DIR/NO_COMPOSE"
+FB="$T/fallback-compose"; printf '#!/usr/bin/env bash\n[ "$1" = version ] && exit 0\nexec docker compose "$@"\n' > "$FB"; chmod +x "$FB"
+export CW_COMPOSE_PATHS="$FB"
+start_daemon; wait_log RECOVERED 14 && ok "recovered through the fallback compose binary" || bad "no recovery"
+[ "$(grep -c 'docker compose is not available to root' "$CW_DIR/watchdog.log")" = 1 ] && ok "fallback logged exactly once" || bad "fallback line count: $(grep -c 'docker compose is not available' "$CW_DIR/watchdog.log")"
+stop_daemon; unset CW_COMPOSE_PATHS
+
+echo "21. installer: --set-webhook writes one live line, replaces it, validates, keeps mode 600"
+T=$(mktemp -d); export FAKE_DIR="$T/docker"; mkdir -p "$FAKE_DIR"; export FAKE_SYSTEMCTL_LOG="$T/sc.log"; export CW_INSTALL_DIR="$T/etc-cw"
+bash "$HERE/../install.sh" --set-webhook https://discord.com/api/webhooks/1/x >"$T/o0.txt" 2>&1 && bad "set-webhook worked before install" || ok "refused before the watchdog is installed"
+bash "$HERE/../install.sh" >"$T/o1.txt" 2>&1
+bash "$HERE/../install.sh" --set-webhook https://discord.com/api/webhooks/111/AAAAAA-token >"$T/o2.txt" 2>&1 && ok "set-webhook exit 0" || { bad "set-webhook failed"; cat "$T/o2.txt"; }
+[ "$(grep -c '^NOTIFY_WEBHOOK=' "$CW_INSTALL_DIR/watchdog.conf")" = 1 ] && ok "exactly one live NOTIFY_WEBHOOK line" || bad "line count wrong"
+bash "$CW_INSTALL_DIR/container-watchdog.sh" --status | grep -q 'webhook: set' && ok "--status shows webhook set" || bad "status does not show it"
+grep -q '^# NOTIFY_WEBHOOK=' "$CW_INSTALL_DIR/watchdog.conf" && ok "explanatory comment kept" || bad "comment lost"
+bash "$HERE/../install.sh" --set-webhook https://discord.com/api/webhooks/222/BBBBBB-token >"$T/o3.txt" 2>&1
+[ "$(grep -c '^NOTIFY_WEBHOOK=' "$CW_INSTALL_DIR/watchdog.conf")" = 1 ] && grep -q '/222/BBBBBB-token$' "$CW_INSTALL_DIR/watchdog.conf" && ok "second run replaces, never duplicates" || bad "replace failed"
+[ "$(stat -c %a "$CW_INSTALL_DIR/watchdog.conf")" = 600 ] && ok "conf still mode 600" || bad "conf mode changed"
+grep -q 'BBBBBB-token' "$T/o3.txt" && bad "full webhook echoed to the screen" || ok "token not echoed in full"
+bash "$HERE/../install.sh" --set-webhook "not-a-url" >"$T/o4.txt" 2>&1 && bad "accepted a non-https value" || ok "rejects a value that is not https://"
+bash "$HERE/../install.sh" --set-webhook 'https://x.invalid/a b' >"$T/o5.txt" 2>&1 && bad "accepted a URL with a space" || ok "rejects a URL with a space"
+grep -q '/222/BBBBBB-token$' "$CW_INSTALL_DIR/watchdog.conf" && ok "bad input leaves the saved webhook alone" || bad "bad input changed the conf"
+unset CW_INSTALL_DIR FAKE_SYSTEMCTL_LOG
+
+echo "22. installer: docker-proxy compose folder taken from the running container"
+T=$(mktemp -d); export FAKE_DIR="$T/docker"; mkdir -p "$FAKE_DIR/docker-proxy" "$T/wsl/proxy"; export FAKE_SYSTEMCTL_LOG="$T/sc.log"
+echo "$T/wsl/proxy" > "$FAKE_DIR/docker-proxy/workdir"
+export CW_INSTALL_DIR="$T/etc-a"
+bash "$HERE/../install.sh" >"$T/oa.txt" 2>&1
+grep -q "^docker-proxy .*dir=$T/wsl/proxy " "$CW_INSTALL_DIR/watchdog.conf" && ok "line enabled with the container's real folder" || { bad "folder not taken from container"; grep docker-proxy "$CW_INSTALL_DIR/watchdog.conf"; }
+! grep -q 'dir=/opt/containers/docker-proxy' "$CW_INSTALL_DIR/watchdog.conf" || ! grep -q '^docker-proxy ' "$CW_INSTALL_DIR/watchdog.conf" && ok "default /opt path not left on the live line" || bad "default path still live"
+echo "$T/does-not-exist" > "$FAKE_DIR/docker-proxy/workdir"
+export CW_INSTALL_DIR="$T/etc-b"
+bash "$HERE/../install.sh" >"$T/ob.txt" 2>&1
+! grep -q '^docker-proxy ' "$CW_INSTALL_DIR/watchdog.conf" && grep -q '^#docker-proxy ' "$CW_INSTALL_DIR/watchdog.conf" && ok "container found but folder unknown: line stays commented" || bad "enabled a line with a bad folder"
+grep -q 'could not be determined' "$T/ob.txt" && ok "tells the user to set dir= themselves" || bad "no explanation printed"
+unset CW_INSTALL_DIR FAKE_SYSTEMCTL_LOG
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
